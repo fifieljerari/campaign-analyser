@@ -3,8 +3,11 @@ import assert from "node:assert/strict";
 
 import {
   OUTCOME,
-  exceedsCoverage,
-  sourceCoverage,
+  VERDICT,
+  assessAnalysis,
+  classifySources,
+  criticismSearched,
+  ownerTokens,
   citeItems,
   extractSourcesWithMap,
   normalizeAnalysis,
@@ -31,14 +34,20 @@ function fullAnalysis(overrides = {}) {
     candidates: [],
     message: "",
     matchedCampaign: { brand: "Dove", name: "Campaign for Real Beauty", year: 2004 },
-    confidence: "High",
-    confidenceReason: "Widely covered.",
+    parentCompany: "Unilever",
     context: "Dove faced a commoditised soap market.",
+    brandContext: [],
     objective: "Reposition Dove around self-esteem.",
     whatTheyDid: { idea: "Real women, not models.", channels: ["Billboards", "Online film"], audience: "Women 25-54" },
-    results: { available: true, items: ["Sales grew after launch (source)."] },
+    results: { available: true, items: [{ text: "Dove soap sales rose from $2bn to $4bn in three years.", type: "sales", dated: true, scopeStated: true }] },
     reception: { praise: ["Widely praised."], criticism: ["Accused of hypocrisy."], backlash: "" },
-    verdict: { rating: "Success", evidence: ["Long-running platform."], interpretation: "Built lasting equity.", split: [] },
+    verdict: {
+      cultural: { rating: "Strong", note: "Widely discussed." },
+      commercial: { rating: "Positive", note: "Sales doubled." },
+      evidence: ["Long-running platform."],
+      interpretation: "Built lasting equity.",
+    },
+    sourceTypes: [],
     lessons: ["Own a purpose.", "Stay consistent."],
     ...overrides,
   };
@@ -47,9 +56,10 @@ function fullAnalysis(overrides = {}) {
 const empty = {
   candidates: [],
   matchedCampaign: null,
-  confidence: "Low",
-  confidenceReason: "",
+  parentCompany: "",
   context: "",
+  brandContext: [],
+  sourceTypes: [],
   objective: "",
   whatTheyDid: null,
   results: null,
@@ -69,7 +79,7 @@ test("a complete analysis validates", () => {
 test("malformed analyses are rejected with reasons", () => {
   assert.deepEqual(validateAnalysis(null), ["response is not a JSON object"]);
   assert.ok(validateAnalysis({ ...fullAnalysis(), isBeauty: "yes" }).length > 0);
-  assert.ok(validateAnalysis(fullAnalysis({ confidence: "Very high" })).some((e) => e.includes("confidence")));
+  assert.ok(validateAnalysis(fullAnalysis({ sourceTypes: [{ domain: "x.com", type: "independent" }] })).some((e) => e.includes("sourceTypes")));
   assert.ok(validateAnalysis(fullAnalysis({ lessons: ["only one"] })).some((e) => e.includes("lessons")));
   // Four lessons are accepted and ALL shown: grounded results
   // are never trimmed. More than 6 is malformed and not shown at all.
@@ -77,10 +87,13 @@ test("malformed analyses are rejected with reasons", () => {
   assert.deepEqual(validateAnalysis(four), []);
   assert.deepEqual(shapeResponse(four, INPUT, SOURCES(5)).lessons, ["a", "b", "c", "d"]);
   assert.ok(validateAnalysis(fullAnalysis({ lessons: ["1", "2", "3", "4", "5", "6", "7"] })).length > 0);
-  assert.ok(validateAnalysis(fullAnalysis({ verdict: { rating: "Great", evidence: ["x"], interpretation: "y", split: [] } })).length > 0);
+  const v = fullAnalysis().verdict;
+  assert.ok(validateAnalysis(fullAnalysis({ verdict: { ...v, commercial: { rating: "Great", note: "x" } } })).length > 0);
+  assert.ok(validateAnalysis(fullAnalysis({ results: { available: true, items: ["a bare string"] } })).length > 0);
+  assert.ok(validateAnalysis(fullAnalysis({ results: { available: true, items: [{ text: "x", type: "vibes", dated: true, scopeStated: true }] } })).length > 0);
   // Results flag must agree with the items.
   assert.ok(validateAnalysis(fullAnalysis({ results: { available: true, items: [] } })).length > 0);
-  assert.ok(validateAnalysis(fullAnalysis({ results: { available: false, items: ["+20% sales"] } })).length > 0);
+  assert.ok(validateAnalysis(fullAnalysis({ results: { available: false, items: fullAnalysis().results.items } })).length > 0);
 });
 
 test("normalize drops blank entries but never shortens a list", () => {
@@ -97,18 +110,6 @@ test("normalize drops blank entries but never shortens a list", () => {
   assert.ok(validateAnalysis(normalizeAnalysis(fullAnalysis({ whatTheyDid: { idea: "x", channels: [""], audience: "y" } }))).length > 0);
   assert.equal(raw.whatTheyDid.channels.length, 10); // input not mutated
   assert.equal(normalizeAnalysis(null), null);
-});
-
-test("a Mixed verdict must be split", () => {
-  const mixed = (split) => fullAnalysis({ verdict: { rating: "Mixed", evidence: ["x"], interpretation: "y", split } });
-  assert.ok(validateAnalysis(mixed([])).some((e) => e.includes("Mixed")));
-  assert.deepEqual(
-    validateAnalysis(mixed([
-      { dimension: "Brand perception", rating: "Success", note: "Loved." },
-      { dimension: "Business results", rating: "Failure", note: "Sales fell." },
-    ])),
-    []
-  );
 });
 
 test("'No public results found' is a valid answer", () => {
@@ -142,6 +143,8 @@ test("the browser refuses to render an analysis unless isBeauty is true", () => 
   assert.equal(viewFor({ ...good, campaignFound: false }).view, "error");
   assert.equal(viewFor({ ...good, sources: [] }).code, "no_sources");
   assert.equal(viewFor({ ...good, verdict: null }).code, "malformed");
+  assert.equal(viewFor({ ...good, assessment: undefined }).code, "malformed");
+  assert.equal(viewFor({ ...good, assessment: { ...good.assessment, verdict: "Triumph" } }).code, "malformed");
   assert.equal(viewFor(null).code, "malformed");
 });
 
@@ -184,16 +187,144 @@ test("brand or year that doesn't match the request is not analysed", () => {
 
 // ---------------------------------------------------------------- confidence + sources
 
-test("model confidence is never overwritten; source coverage is a separate check", () => {
-  assert.equal(sourceCoverage(6), "High");
-  assert.equal(sourceCoverage(3), "Medium");
-  assert.equal(sourceCoverage(1), "Low");
-  assert.equal(exceedsCoverage("High", 2), true);
-  assert.equal(exceedsCoverage("Low", 9), false);
-  const shaped = shapeResponse(fullAnalysis(), INPUT, SOURCES(2));
-  assert.equal(shaped.confidence, "High"); // exactly what the model said
-  assert.equal(shaped.sourceCoverage, "Low");
-  assert.equal(shaped.confidenceExceedsSources, true);
+const site = (domain, i = 0) => ({ title: domain, uri: `https://vertexaisearch.cloud.google.com/r/${domain}/${i}` });
+const PRESS = [site("adage.com"), site("campaignlive.co.uk"), site("marketingweek.com")];
+
+test("source tags: brand or parent company in the domain is brand-owned, whatever the model says", () => {
+  assert.ok(ownerTokens("L'Oréal Paris").includes("loreal"));
+  assert.ok(ownerTokens("Olay", "Procter & Gamble").includes("pg"));
+  const tagged = classifySources(
+    [site("dove.com"), site("unilever.com"), site("lorealparisusa.com"), site("us.pg.com"), site("adage.com"), site("someblog.net"), site("wikipedia.org"), site("pgatour.com")],
+    { brand: "Dove", parentCompany: "Unilever", sourceTypes: [{ domain: "dove.com", type: "trade_press" }, { domain: "someblog.net", type: "trade_press" }] }
+  );
+  assert.deepEqual(tagged.map((s) => s.type), ["brand_owned", "brand_owned", "blog_aggregator", "blog_aggregator", "trade_press", "trade_press", "blog_aggregator", "blog_aggregator"]);
+  assert.equal(classifySources([site("lorealparisusa.com")], { brand: "L'Oréal Paris" })[0].type, "brand_owned");
+  assert.equal(classifySources([site("us.pg.com")], { brand: "Olay", parentCompany: "Procter & Gamble" })[0].type, "brand_owned");
+  // Real page URLs (the hand-written examples) use their own hostname.
+  assert.equal(classifySources([{ title: "Wikipedia: Dove", uri: "https://en.wikipedia.org/wiki/Dove" }], { brand: "Dove" })[0].domain, "en.wikipedia.org");
+});
+
+test("confidence ignores source count: it needs non-brand sites AND a campaign-level outcome", () => {
+  const base = fullAnalysis();
+  // Twelve sources, all brand-owned: still Low.
+  const owned = Array.from({ length: 12 }, (_, i) => site("dove.com", i));
+  assert.equal(assessAnalysis(base, owned, {}, { brand: "Dove" }).confidence, "Low");
+  // Same site counted once: three pages of adage.com is one site.
+  const sameSite = [site("adage.com", 1), site("adage.com", 2), site("adage.com", 3)];
+  assert.equal(assessAnalysis(base, sameSite, {}, { brand: "Dove" }).confidence, "Medium");
+  // Outcome backed by one site only: uncorroborated, so Medium.
+  assert.equal(assessAnalysis(base, PRESS, { results: [[0]] }, { brand: "Dove" }).confidence, "Medium");
+  assert.equal(assessAnalysis(base, PRESS, {}, { brand: "Dove" }).confidence, "Medium");
+  // Outcome backed by 2+ non-brand sites, 3 distinct sites overall: High.
+  const high = assessAnalysis(base, PRESS, { results: [[0, 1]] }, { brand: "Dove" });
+  assert.equal(high.confidence, "High");
+  assert.equal(high.verdict, VERDICT.success);
+  assert.ok(!/source count|returned \d+ sources/i.test(high.confidenceReason));
+  // Outcome linked only to brand-owned sources: never High.
+  const brandOnly = assessAnalysis(base, [site("dove.com"), ...PRESS], { results: [[0]] }, { brand: "Dove" });
+  assert.equal(brandOnly.confidence, "Medium");
+  assert.match(brandOnly.confidenceReason, /brand-owned/);
+});
+
+test("no campaign-level outcome: insufficient evidence, or cultural impact with commercial effect unproven", () => {
+  const brandLevelOnly = fullAnalysis({
+    results: { available: true, items: [{ text: "Dove's total revenue reached €6 billion.", type: "sales", dated: true, scopeStated: true }] },
+    verdict: { ...fullAnalysis().verdict, cultural: { rating: "Weak", note: "Little coverage." }, commercial: { rating: "Positive", note: "Brand grew." } },
+  });
+  const a = assessAnalysis(brandLevelOnly, PRESS, {}, { brand: "Dove" });
+  assert.equal(a.verdict, VERDICT.insufficient);
+  assert.equal(a.confidence, "Medium");
+  assert.ok(a.resultFlags[0].some((f) => f.startsWith("brand-level")));
+
+  const undated = fullAnalysis({ results: { available: true, items: [{ text: "Sales rose 700%.", type: "sales", dated: false, scopeStated: false }] } });
+  const u = assessAnalysis(undated, PRESS, {}, { brand: "Dove" });
+  assert.equal(u.verdict, VERDICT.cultural);
+  assert.deepEqual(u.resultFlags[0], ["scope unclear"]);
+
+  const thin = fullAnalysis({ results: { available: false, items: [] } });
+  const t = assessAnalysis(thin, [site("dove.com"), site("someblog.net")], {}, { brand: "Dove" });
+  assert.equal(t.verdict, VERDICT.insufficient);
+  assert.equal(t.confidence, "Low");
+});
+
+test("verdict and confidence read the same commercial-evidence rule, so they can't contradict", () => {
+  // REN-style: outputs tagged as measured results, but the commercial rating is Unproven.
+  const ren = fullAnalysis({
+    results: { available: true, items: [
+      { text: "Reached zero waste by early 2022.", type: "measured_result", dated: true, scopeStated: true },
+      { text: "Repurposed 45 tonnes of plastic.", type: "output", dated: true, scopeStated: true },
+    ] },
+    verdict: { ...fullAnalysis().verdict, cultural: { rating: "Strong", note: "x" }, commercial: { rating: "Unproven", note: "y" } },
+  });
+  const a = assessAnalysis(ren, PRESS, { results: [[0, 1], [0, 1]] }, { brand: "Dove" });
+  assert.equal(a.commercialEvidence.present, false);
+  assert.equal(a.verdict, VERDICT.cultural);
+  assert.equal(a.confidence, "Medium");
+  assert.match(a.confidenceReason, /commercial rating: Unproven/);
+  assert.match(a.verdictReason, /commercial rating: Unproven/);
+  // Positive rating with no outcome item isn't evidence either.
+  const noItems = fullAnalysis({ results: { available: false, items: [] } });
+  const b = assessAnalysis(noItems, PRESS, {}, { brand: "Dove" });
+  assert.equal(b.commercialEvidence.present, false);
+  assert.notEqual(b.verdict, VERDICT.success);
+  assert.notEqual(b.confidence, "High");
+});
+
+test("brand-owned if EITHER the domain check OR the model says so", () => {
+  const tagged = classifySources([site("hul.co.in"), site("adage.com")], {
+    brand: "Dove", parentCompany: "Unilever",
+    sourceTypes: [{ domain: "hul.co.in", type: "brand_owned" }, { domain: "adage.com", type: "brand_owned" }],
+  });
+  assert.deepEqual(tagged.map((s) => s.type), ["brand_owned", "brand_owned"]);
+});
+
+test("High needs trade or business press among an outcome's sources; Wikipedia is aggregator tier", () => {
+  const base = fullAnalysis();
+  const blogs = [site("en.wikipedia.org"), site("someblog.net"), site("another-blog.com")];
+  // The model calling Wikipedia trade press doesn't change its tier.
+  const withModel = { ...base, sourceTypes: [{ domain: "en.wikipedia.org", type: "trade_press" }, { domain: "someblog.net", type: "trade_press" }] };
+  const tagged = classifySources(blogs, { brand: "Dove", sourceTypes: withModel.sourceTypes });
+  assert.equal(tagged[0].type, "blog_aggregator");
+  assert.equal(tagged[0].typeBasis, "list");
+  // Outcome backed by Wikipedia + a blog only: corroborated, but not press-backed, so Medium.
+  const noPress = assessAnalysis(base, blogs, { results: [[0, 2]] }, { brand: "Dove" });
+  assert.equal(noPress.commercialEvidence.corroborated, true);
+  assert.equal(noPress.commercialEvidence.pressBacked, false);
+  assert.equal(noPress.confidence, "Medium");
+  assert.match(noPress.confidenceReason, /trade or business press/);
+  // Same outcome also backed by adage.com: High.
+  const withPress = assessAnalysis(base, [...blogs, site("adage.com")], { results: [[0, 3]] }, { brand: "Dove" });
+  assert.equal(withPress.commercialEvidence.pressBacked, true);
+  assert.equal(withPress.confidence, "High");
+});
+
+test("parent-company alias list: hul.co.in is Unilever-owned, but only for Unilever brands", () => {
+  const sites = [site("hul.co.in"), site("elcompanies.com"), site("unilever.com")];
+  assert.deepEqual(
+    classifySources(sites, { brand: "Dove", parentCompany: "Unilever" }).map((s) => [s.type, s.typeBasis]),
+    [["brand_owned", "alias"], ["blog_aggregator", "default"], ["brand_owned", "alias"]]
+  );
+  // A competitor's corporate site is not brand-owned for another company's brand.
+  assert.equal(classifySources([site("unilever.com")], { brand: "L'Oréal Paris", parentCompany: "L'Oréal" })[0].type, "blog_aggregator");
+  assert.equal(classifySources([site("elcompanies.com")], { brand: "Clinique", parentCompany: "The Estée Lauder Companies" })[0].type, "brand_owned");
+  assert.equal(classifySources([site("pgcareers.com")], { brand: "Olay", parentCompany: "Procter & Gamble" })[0].type, "brand_owned");
+  assert.equal(classifySources([site("lorealusa.com")], { brand: "L'Oréal Paris" })[0].type, "brand_owned"); // brand names the parent
+  assert.equal(classifySources([site("kao.com")], { brand: "Bioré", parentCompany: "Kao Corporation" })[0].type, "brand_owned");
+});
+
+test("figures backed by one site are flagged single source; 'independent' is flagged under 3 non-brand sites", () => {
+  const data = fullAnalysis({ verdict: { ...fullAnalysis().verdict, evidence: ["Sales doubled to $4bn.", "Won at Cannes in 2007."] }, context: "Multiple independent sources agree." });
+  const a = assessAnalysis(data, [site("adage.com"), site("thedrum.com")], { results: [[0, 1]], evidence: [[0], [0]] }, { brand: "Dove" });
+  assert.deepEqual(a.resultFlags[0], []);
+  assert.deepEqual(a.evidenceFlags, [["single source"], []]); // a bare year isn't a figure
+  assert.equal(a.independentWarning, true);
+  assert.equal(assessAnalysis(data, PRESS, {}, { brand: "Dove" }).independentWarning, false);
+});
+
+test("criticism search is read from Google's own query log", () => {
+  assert.equal(criticismSearched(["dove real beauty 2004", "dove real beauty criticism backlash"]), true);
+  assert.equal(criticismSearched(["dove real beauty 2004"]), false);
+  assert.equal(criticismSearched(undefined), null);
 });
 
 test("sources come only from grounding metadata, deduped, https only", () => {
@@ -330,6 +461,9 @@ test("handler: grounded analysis comes back shaped, with metadata sources", asyn
   assert.equal(res.statusCode, 200);
   assert.equal(res.body.outcome, OUTCOME.analysis);
   assert.equal(res.body.sources.length, 6);
+  assert.ok(res.body.sources.every((s) => s.type));
+  assert.equal(res.body.assessment.criticismSearched, false);
+  assert.equal(res.body.confidence, undefined, "confidence comes only from the app assessment");
   assert.equal(res.body.searchSuggestionsHtml, "<div>chip</div>");
   assert.equal(viewFor(res.body).view, OUTCOME.analysis);
 });
@@ -341,8 +475,17 @@ test("handler: analysis with no grounding sources is withheld after one retry", 
   assert.equal(res.body.code, "no_sources");
 });
 
-test("handler: malformed JSON retries once, then fails clearly", async () => {
-  const { res, calls } = await run([geminiReply("not json", GM(3)), geminiReply({ isBeauty: true }, GM(3))]);
+test("handler: malformed JSON retries once, logs only the error type, then fails clearly", async () => {
+  const logged = [];
+  const warn = console.warn;
+  console.warn = (m) => logged.push(m);
+  const secret = fullAnalysis({ context: "GROUNDED-TEXT-MARKER", lessons: ["one only GROUNDED-TEXT-MARKER"] });
+  const { res, calls } = await run([geminiReply("not json", GM(3)), geminiReply(secret, GM(3))]);
+  console.warn = warn;
+  assert.equal(logged.length, 2);
+  assert.ok(logged.every((l) => JSON.parse(l).event === "attempt_rejected"));
+  assert.match(logged[1], /lessons needs 2-6 items/);
+  assert.ok(!logged.join().includes("GROUNDED-TEXT-MARKER"), "logs never carry grounded text");
   assert.equal(calls, 2);
   assert.equal(res.statusCode, 502);
   assert.equal(res.body.code, "malformed");
@@ -389,7 +532,7 @@ test("examples are complete, valid analyses with real, in-range citations", () =
       assert.ok(!s.uri.includes("vertexaisearch"), ex.id + ": examples link to real pages, not grounding redirects");
     }
     for (const list of ["results", "evidence"]) {
-      const items = list === "results" ? a.results.items : a.verdict.evidence;
+      const items = list === "results" ? a.results.items.map((i) => i.text) : a.verdict.evidence;
       assert.equal(a.citations[list].length, items.length, `${ex.id} ${list}: one citation list per item`);
       for (const cites of a.citations[list]) {
         assert.ok(cites.length > 0, `${ex.id} ${list}: every example claim cites a source`);
@@ -410,6 +553,12 @@ test("examples carry the corrected facts and none of the known scope errors", ()
   assert.ok(!/115,000/.test(aesop), "2026 cumulative total is not a 2023 result");
   assert.equal(EXAMPLES[1].analysis.results.available, false);
   assert.match(aesop, /No confirmed outcome exists/);
+  assert.ok(!/independent source/i.test(dove + aesop));
+  const [d, a] = EXAMPLES.map((ex) => assessAnalysis(ex.analysis, ex.analysis.sources, ex.analysis.citations));
+  assert.equal(d.verdict, VERDICT.success);
+  assert.equal(d.confidence, "Medium"); // its sales figure is backed by one site only
+  assert.equal(a.verdict, VERDICT.someCultural);
+  assert.equal(a.confidence, "Medium");
 });
 
 test("examples module can't reach the API", () => {

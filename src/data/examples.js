@@ -18,13 +18,12 @@ export const EXAMPLES = [
     year: 2004,
     analysis: {
       matchedCampaign: { brand: "Dove", name: "Campaign for Real Beauty", year: 2004 },
-      confidence: "High",
-      confidenceReason:
-        "Well documented: several independent sources cover the campaign, and published figures exist for sales, earned media and awards.",
+      parentCompany: "Unilever",
       context:
         "Research behind the campaign found that only 4% of women considered themselves beautiful. Beauty advertising at the time relied on professional models, and Dove set out to take the opposite position.",
       objective:
         "Build self-confidence in women and girls by widening what counts as beautiful, and give Dove a distinct, ownable position in a crowded category.",
+      brandContext: [],
       whatTheyDid: {
         idea:
           "The launch billboards, first in Germany and the UK, showed photographs of ordinary women instead of models and asked passers-by to vote on captions such as “Fat or Fab” and “Wrinkled or Wonderful”, with the running tally shown on the billboard. The platform grew into short films, including Daughters and Evolution in 2006.",
@@ -39,12 +38,42 @@ export const EXAMPLES = [
       results: {
         available: true,
         items: [
-          "Ad Age reported that sales of Dove soap rose from $2 billion to $4 billion in the three years after launch.",
-          "Unilever estimated the exposure the campaign generated was worth more than 30 times the paid-for media space.",
-          "The Evolution film (2006) won both the Film Grand Prix and the Cyber Grand Prix at Cannes Lions in 2007.",
-          "The early campaign microsite drew a reported 1.5 million visitors.",
-          "Sales of Dove firming lotion in the UK rose by 700%, according to a published case-study deck. This covers one product in one market, not Dove's sales overall.",
-          "The Dove Self-Esteem Project, part of the same Real Beauty platform, has educated more than 100 million young people on body confidence, towards a goal of 250 million by 2030. This is a cumulative, long-term total, not a 2004 result.",
+          {
+            text: "Ad Age reported that sales of Dove soap rose from $2 billion to $4 billion in the three years after launch.",
+            type: "sales",
+            dated: true,
+            scopeStated: true,
+          },
+          {
+            text: "Unilever estimated the exposure the campaign generated was worth more than 30 times the paid-for media space.",
+            type: "reach",
+            dated: false,
+            scopeStated: true,
+          },
+          {
+            text: "The Evolution film (2006) won both the Film Grand Prix and the Cyber Grand Prix at Cannes Lions in 2007.",
+            type: "creative_award",
+            dated: true,
+            scopeStated: true,
+          },
+          {
+            text: "The early campaign microsite drew a reported 1.5 million visitors.",
+            type: "reach",
+            dated: false,
+            scopeStated: true,
+          },
+          {
+            text: "Sales of Dove firming lotion in the UK rose by 700%, according to a published case-study deck. This covers one product in one market, not Dove's sales overall.",
+            type: "sales",
+            dated: false,
+            scopeStated: true,
+          },
+          {
+            text: "The Dove Self-Esteem Project, part of the same Real Beauty platform, has educated more than 100 million young people on body confidence, towards a goal of 250 million by 2030. This is a cumulative, long-term total, not a 2004 result.",
+            type: "reach",
+            dated: false,
+            scopeStated: true,
+          },
         ],
       },
       reception: {
@@ -62,7 +91,14 @@ export const EXAMPLES = [
           "A later Dove ad, a 2017 Facebook video in which a Black woman appeared to turn into a white woman, was widely called racially insensitive. It came well after the 2004 launch but is often discussed alongside the platform.",
       },
       verdict: {
-        rating: "Success",
+        cultural: {
+          rating: "Strong",
+          note: "Top Cannes Lions awards for Evolution, No. 1 in Ad Age's ranking of 21st-century campaigns, and earned exposure far beyond the paid media.",
+        },
+        commercial: {
+          rating: "Positive",
+          note: "Ad Age reported Dove soap sales doubling in the three years after launch.",
+        },
         evidence: [
           "Ad Age reported Dove soap sales rising from $2 billion to $4 billion in three years.",
           "Unilever estimated earned exposure at more than 30 times the paid media space.",
@@ -71,7 +107,6 @@ export const EXAMPLES = [
         ],
         interpretation:
           "On the documented outcomes (sales growth, earned media far beyond the paid budget, and top industry awards) this was a clear commercial and cultural success. The criticism is real and lasting, but it mostly concerns Unilever's wider portfolio and later executions rather than the 2004 campaign's own results.",
-        split: [],
       },
       lessons: [
         "A specific, research-backed insight (only 4% of women called themselves beautiful) can carry a campaign for years.",
@@ -88,6 +123,12 @@ export const EXAMPLES = [
         },
         { title: "SlideShare: Dove Campaign for Real Beauty (case-study deck)", uri: "https://www.slideshare.net/slideshow/dove-campaign-for-real-beauty-16193853/16193853" },
       ],
+      sourceTypes: [
+        { domain: "en.wikipedia.org", type: "blog_aggregator" },
+        { domain: "thebrandhopper.com", type: "blog_aggregator" },
+        { domain: "cases.open.ubc.ca", type: "blog_aggregator" },
+        { domain: "slideshare.net", type: "blog_aggregator" },
+      ],
       citations: {
         results: [[0], [0], [1], [2], [4], [2]],
         evidence: [[0], [0], [1], [0]],
@@ -100,13 +141,12 @@ export const EXAMPLES = [
     year: 2023,
     analysis: {
       matchedCampaign: { brand: "Aesop", name: "Aesop Queer Library", year: 2023 },
-      confidence: "Medium",
-      confidenceReason:
-        "Four independent publications cover the 2023 edition in detail, but none reports an outcome for it: no giveaway total, visitor numbers or sales effect.",
+      parentCompany: "",
       context:
         "The Queer Library is a recurring Aesop initiative; the 2022 edition gave away over 34,000 books. The 2023 edition ran as book censorship in the US was rising: the American Library Association counted a 38% increase in titles targeted for censorship in 2022, most of them by or about LGBTQ+ people and people of colour.",
       objective:
         "Give away queer literature for free during Pride season and support the fight against book bans.",
+      brandContext: [],
       whatTheyDid: {
         idea:
           "Aesop turned selected stores into temporary libraries stocked with books by LGBTQIA+ authors. Visitors could choose a complimentary book and take it home, with no purchase required, while supplies lasted, and the Aesop Foundation donated $100,000 to the American Civil Liberties Union Foundation to support its work against book bans.",
@@ -126,7 +166,14 @@ export const EXAMPLES = [
         backlash: "",
       },
       verdict: {
-        rating: "Success",
+        cultural: {
+          rating: "Moderate",
+          note: "Ran in six cities and drew favourable coverage from design and culture press.",
+        },
+        commercial: {
+          rating: "Unproven",
+          note: "No outcome for the 2023 edition has been published: no giveaway total, visitor numbers or sales effect.",
+        },
         evidence: [
           "The Aesop Foundation donated $100,000 to the ACLU Foundation alongside the 2023 edition.",
           "The 2023 edition ran in six cities on three continents: Melbourne, Sydney, New York, Los Angeles, Toronto and London.",
@@ -134,7 +181,6 @@ export const EXAMPLES = [
         ],
         interpretation:
           "Judged on what is documented, execution and reception, the 2023 edition did what it set out to do: it ran widely, put a concrete donation behind its message, and drew favourable coverage. But no outcome for 2023 has been published, so this verdict says nothing about its business impact. No confirmed outcome exists for this edition.",
-        split: [],
       },
       lessons: [
         "Giving store space over to something free and useful, rather than to selling, can say more about a brand's values than an ad.",
@@ -149,6 +195,12 @@ export const EXAMPLES = [
           uri: "https://hypebeast.com/2023/6/aesop-queer-library-pride-month-2023-june-july-london-stores-new-york-books-lgbtqia",
         },
         { title: "Astrophe Magazine: The Aesop Queer Library", uri: "https://www.astrophemagazine.com/astrophe-magazine/the-aesop-queer-library" },
+      ],
+      sourceTypes: [
+        { domain: "wallpaper.com", type: "trade_press" },
+        { domain: "timeout.com", type: "trade_press" },
+        { domain: "hypebeast.com", type: "trade_press" },
+        { domain: "astrophemagazine.com", type: "blog_aggregator" },
       ],
       citations: {
         results: [],

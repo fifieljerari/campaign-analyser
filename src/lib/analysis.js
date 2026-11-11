@@ -6,16 +6,33 @@
 //   - decideOutcome() turns the flags into ONE outcome the UI renders, and
 //     refuses an analysis for non-beauty, unconfirmed, mismatched or
 //     ambiguous requests no matter what the analysis fields say
-//   - sourceCoverage() rates how many real sources the search returned
-//     (counted from grounding metadata, not from the model). It is shown as a
-//     separate tool check; the model's own confidence is never overwritten.
+//   - assessAnalysis() is the app's own judgement layer: it tags each source
+//     (brand-owned / trade-business press / blog-aggregator), flags figures
+//     with a single source or unclear scope, and sets the overall verdict and
+//     confidence from that evidence. The model is never asked for either.
 //
 // Google's grounding terms forbid modifying Grounded Results, so nothing here
 // edits the model's content: an answer is either shown as returned (apart
-// from dropping empty list entries) or not shown at all.
+// from dropping empty list entries) or not shown at all. Everything
+// assessAnalysis() produces is shown in separate, labelled app elements.
 
-export const RATINGS = ["Success", "Mixed", "Failure"];
 export const CONFIDENCE = ["High", "Medium", "Low"];
+export const RESULT_TYPES = ["sales", "effectiveness_award", "measured_result", "creative_award", "reach", "output"];
+// The result types that count as evidence of the campaign's business effect.
+export const OUTCOME_TYPES = ["sales", "effectiveness_award", "measured_result"];
+export const CULTURAL_RATINGS = ["Strong", "Moderate", "Weak", "Negative", "Unclear"];
+export const COMMERCIAL_RATINGS = ["Positive", "Mixed", "Negative", "Unproven"];
+export const SOURCE_TYPES = ["brand_owned", "trade_press", "blog_aggregator"];
+export const SOURCE_TYPE_LABEL = { brand_owned: "Brand-owned", trade_press: "Trade/business press", blog_aggregator: "Blog/aggregator" };
+
+export const VERDICT = {
+  success: "Success",
+  mixed: "Mixed",
+  failure: "Failure",
+  cultural: "Strong cultural impact, commercial effect unproven",
+  someCultural: "Some cultural impact, commercial effect unproven",
+  insufficient: "Insufficient evidence",
+};
 
 export const OUTCOME = {
   analysis: "analysis",
@@ -71,9 +88,9 @@ export function validateAnalysis(data) {
     need(Number.isInteger(m.year) && m.year >= 1900 && m.year <= 2100, "matchedCampaign.year must be a year");
   }
 
-  need(CONFIDENCE.includes(data.confidence), "confidence must be High, Medium or Low");
-  need(isText(data.confidenceReason), "confidenceReason is required");
+  need(isText(data.parentCompany, { allowEmpty: true }), "parentCompany must be a string");
   need(isText(data.context), "context is required");
+  need(isTextList(data.brandContext), "brandContext must be a list");
   need(isText(data.objective), "objective is required");
 
   const w = data.whatTheyDid;
@@ -88,7 +105,7 @@ export function validateAnalysis(data) {
   need(r && typeof r === "object", "results is required");
   if (r && typeof r === "object") {
     need(typeof r.available === "boolean", "results.available must be true or false");
-    need(isTextList(r.items), "results.items must be a list");
+    need(Array.isArray(r.items) && r.items.length <= MAX_ITEMS && r.items.every(isResultItem), "results.items must be a list of {text, type, dated, scopeStated}");
     if (r.available === true) need(r.items.length > 0, "results.available is true but no items given");
     if (r.available === false) need(r.items.length === 0, "results.available is false but items were given");
   }
@@ -104,21 +121,32 @@ export function validateAnalysis(data) {
   const v = data.verdict;
   need(v && typeof v === "object", "verdict is required");
   if (v && typeof v === "object") {
-    need(RATINGS.includes(v.rating), "verdict.rating must be Success, Mixed or Failure");
+    need(isDimension(v.cultural, CULTURAL_RATINGS), "verdict.cultural needs a rating and note");
+    need(isDimension(v.commercial, COMMERCIAL_RATINGS), "verdict.commercial needs a rating and note");
     need(isTextList(v.evidence, { min: 1 }), "verdict.evidence needs 1+ items");
     need(isText(v.interpretation), "verdict.interpretation is required");
-    need(Array.isArray(v.split), "verdict.split must be a list");
-    if (Array.isArray(v.split)) {
-      for (const s of v.split) {
-        need(s && isText(s.dimension) && RATINGS.includes(s.rating) && isText(s.note), "each verdict.split item needs dimension, rating, note");
-      }
-      if (v.rating === "Mixed") need(v.split.length >= 2, "a Mixed verdict must be split into 2+ dimensions");
-    }
   }
+
+  need(
+    Array.isArray(data.sourceTypes) &&
+      data.sourceTypes.length <= 40 &&
+      data.sourceTypes.every((s) => s && isText(s.domain) && SOURCE_TYPES.includes(s.type)),
+    "sourceTypes must be a list of {domain, type}"
+  );
 
   // The prompt asks for 2-3; up to 6 are accepted and all are shown.
   need(isTextList(data.lessons, { min: 2, max: 6 }), "lessons needs 2-6 items");
   return errors;
+}
+
+function isResultItem(x) {
+  return (
+    x && typeof x === "object" && isText(x.text) && RESULT_TYPES.includes(x.type) && typeof x.dated === "boolean" && typeof x.scopeStated === "boolean"
+  );
+}
+
+function isDimension(d, ratings) {
+  return d && typeof d === "object" && ratings.includes(d.rating) && isText(d.note);
 }
 
 // Drops blank or non-text entries from lists before validation. An empty
@@ -126,12 +154,13 @@ export function validateAnalysis(data) {
 // see. Lists are never shortened.
 const LIST_PATHS = [
   "candidates",
+  "brandContext",
   "whatTheyDid.channels",
   "results.items",
   "reception.praise",
   "reception.criticism",
   "verdict.evidence",
-  "verdict.split",
+  "sourceTypes",
   "lessons",
 ];
 
@@ -194,20 +223,298 @@ export function decideOutcome(data, input) {
   return { outcome: OUTCOME.analysis };
 }
 
-// How much source material the search actually returned. Shown next to the
-// model's confidence as a separate tool check, so a reader can see when the
-// model claims more certainty than its sources support.
-export function sourceCoverage(sourceCount) {
-  return sourceCount >= 5 ? "High" : sourceCount >= 3 ? "Medium" : "Low";
+// ---------------------------------------------------------------- judgement layer
+
+function fold(s) {
+  return String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
 
-export function exceedsCoverage(modelConfidence, sourceCount) {
-  return CONFIDENCE.indexOf(modelConfidence) < CONFIDENCE.indexOf(sourceCoverage(sourceCount));
+function compact(s) {
+  return fold(s).replace(/[^a-z0-9]/g, "");
+}
+
+// The site a source came from. Grounding links point at a Google redirect,
+// so for those the title (which Google sets to the site's domain) is used.
+export function sourceDomain(source) {
+  let host = "";
+  try {
+    host = new URL(source.uri).hostname.toLowerCase();
+  } catch {
+    host = "";
+  }
+  if (!host || /(^|\.)(vertexaisearch\.cloud\.google\.com|google\.com)$/.test(host)) {
+    const t = String(source.title || "").trim().toLowerCase();
+    host = /^[a-z0-9.-]+\.[a-z]{2,}$/.test(t) ? t : "";
+  }
+  return host.replace(/^www\./, "");
+}
+
+function bareDomain(d) {
+  return String(d || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "").replace(/^www\./, "");
+}
+
+function sameSite(a, b) {
+  return a === b || a.endsWith("." + b) || b.endsWith("." + a);
+}
+
+// Words too generic to identify a brand's own domain.
+const GENERIC_WORDS = new Set(["paris", "london", "york", "beauty", "cosmetics", "group", "company", "inc", "the", "and", "skin", "care", "professional", "procter", "gamble", "johnson"]);
+
+// Brand and parent-company names as they'd appear in a domain:
+// "L'Oréal Paris" -> lorealparis, oreal; "Procter & Gamble" -> pg.
+export function ownerTokens(brand, parentCompany = "") {
+  const out = new Set();
+  for (const name of [brand, parentCompany]) {
+    const full = compact(name);
+    if (full.length >= 3) out.add(full);
+    for (const w of fold(name).split(/[\s&,/()-]+/).map(compact)) if (w.length >= 3 && !GENERIC_WORDS.has(w)) out.add(w);
+  }
+  if (/procter|p\s*&\s*g/i.test(parentCompany)) out.add("pg");
+  return [...out];
+}
+
+function isOwnedDomain(domain, tokens) {
+  const labels = domain.split(".").slice(0, -1).map(compact); // drop the TLD
+  return tokens.some((t) => labels.some((l) => (t.length >= 4 ? l.includes(t) : l === t)));
+}
+
+// Trade, business and news publications, recognised without asking the model.
+const KNOWN_PRESS = [
+  "adage.com", "adweek.com", "campaignlive.co.uk", "campaignlive.com", "marketingweek.com", "thedrum.com", "warc.com",
+  "effie.org", "canneslions.com", "lovethework.com", "ipa.co.uk", "dandad.org", "oneclub.org", "mediapost.com",
+  "marketingdive.com", "retaildive.com", "businessinsider.com", "forbes.com", "fortune.com", "ft.com", "wsj.com",
+  "nytimes.com", "washingtonpost.com", "theguardian.com", "bbc.co.uk", "bbc.com", "reuters.com", "bloomberg.com",
+  "cnbc.com", "economist.com", "fastcompany.com", "hbr.org", "time.com", "independent.co.uk", "telegraph.co.uk",
+  "wwd.com", "voguebusiness.com", "businessoffashion.com", "glossy.co", "cosmeticsbusiness.com", "cosmeticsdesign.com",
+  "cosmeticsdesign-europe.com", "cosmeticsdesign-asia.com", "beautyindependent.com", "happi.com", "premiumbeautynews.com",
+];
+
+// Aggregators that never count as trade or business press, whatever the
+// model says: wikis, document and slide sharing, blogging platforms.
+const KNOWN_AGGREGATORS = [
+  "wikipedia.org", "wikiwand.com", "fandom.com", "scribd.com", "slideshare.net", "studocu.com", "coursehero.com",
+  "medium.com", "substack.com", "blogspot.com", "wordpress.com", "tumblr.com", "youtube.com", "pinterest.com", "reddit.com",
+];
+
+// Parent companies and the corporate and regional domains they own, for
+// subsidiaries whose domain doesn't contain the parent's name (hul.co.in is
+// Hindustan Unilever). A domain here is brand-owned only when the analysed
+// brand belongs to that parent; otherwise it is a competitor's site.
+export const PARENT_DOMAINS = {
+  unilever: ["unilever.com", "unileverusa.com", "unilever.co.uk", "hul.co.in", "hindustanunilever.com", "unilever.com.au", "unilevernotices.com"],
+  loreal: ["loreal.com", "loreal-finance.com", "lorealusa.com", "loreal.co.uk", "loreal.fr", "lorealparisusa.com", "loreal-paris.co.uk", "loreal-paris.fr"],
+  pg: ["pg.com", "pgcareers.com", "pgbrands.com", "pgeveryday.com", "pg.co.uk", "pgindia.com"],
+  esteelauder: ["elcompanies.com", "esteelauder.com", "esteelauder.co.uk"],
+  coty: ["coty.com", "cotyinc.com"],
+  beiersdorf: ["beiersdorf.com", "beiersdorf.de", "beiersdorf.co.uk", "beiersdorf.us"],
+  shiseido: ["shiseido.com", "shiseido.co.jp", "shiseidogroup.com", "corp.shiseido.com"],
+  kao: ["kao.com", "kao.co.jp", "kaousa.com"],
+};
+
+// Which PARENT_DOMAINS entries apply to this brand: the brand or its parent
+// company names the key (L'Oréal Paris -> loreal, Procter & Gamble -> pg).
+function parentDomainsFor(brand, parentCompany) {
+  const names = [brand, parentCompany].map(compact).filter(Boolean);
+  const keyMatches = { pg: /procter|pandg|^pg$/, esteelauder: /esteelauder/ };
+  return Object.entries(PARENT_DOMAINS)
+    .filter(([key]) => names.some((n) => (keyMatches[key] ? keyMatches[key].test(n) : n.includes(key))))
+    .flatMap(([, domains]) => domains);
+}
+
+// Tags every source. Brand-owned if ANY of: the domain is on the parent's
+// alias list, the brand/parent name is in the domain, or the model classed
+// it as brand-owned. Otherwise the known-aggregator list (Wikipedia etc.),
+// then the known-press list, then the model's classification; anything left
+// is a blog/aggregator, the type that earns no extra trust.
+export function classifySources(sources, { brand, parentCompany = "", sourceTypes = [] }) {
+  const tokens = ownerTokens(brand, parentCompany);
+  const parentDomains = parentDomainsFor(brand, parentCompany);
+  const modelTypes = sourceTypes.map((s) => ({ domain: bareDomain(s.domain), type: s.type })).filter((s) => s.domain);
+  return sources.map((s) => {
+    const domain = sourceDomain(s);
+    let type = "blog_aggregator";
+    let basis = "default";
+    const m = domain && modelTypes.find((t) => sameSite(domain, t.domain));
+    // Brand-owned if EITHER the domain check OR the model says so; either
+    // signal is enough to withhold the trust a non-brand source earns.
+    if (domain && parentDomains.some((d) => sameSite(domain, d))) [type, basis] = ["brand_owned", "alias"];
+    else if (domain && isOwnedDomain(domain, tokens)) [type, basis] = ["brand_owned", "domain"];
+    else if (m?.type === "brand_owned") [type, basis] = ["brand_owned", "model"];
+    else if (domain && KNOWN_AGGREGATORS.some((k) => sameSite(domain, k))) [type, basis] = ["blog_aggregator", "list"];
+    else if (domain && KNOWN_PRESS.some((k) => sameSite(domain, k))) [type, basis] = ["trade_press", "list"];
+    else if (m) [type, basis] = [m.type, "model"];
+    return { ...s, domain, type, typeBasis: basis };
+  });
+}
+
+function siteKey(s) {
+  return s.domain || compact(s.title);
+}
+
+// Brand- or company-wide figures that must never count as a campaign result.
+const BRAND_LEVEL = /market (value|cap)|total (revenue|sales|turnover)|(group|company|net|annual|organic) (sales|revenue|turnover)|brand value|valuation|revenue of the (brand|company)/i;
+
+// A number other than a bare year.
+function hasFigure(text) {
+  return /\d/.test(String(text).replace(/\b(19|20)\d{2}s?\b/g, ""));
+}
+
+// The app's own flags for one claim, from the citations of that claim.
+function claimFlags(text, cites, tagged) {
+  const flags = [];
+  if (Array.isArray(cites) && cites.length > 0 && hasFigure(text)) {
+    const sites = new Set(cites.map((n) => tagged[n]).filter(Boolean).map(siteKey));
+    if (sites.size === 1) flags.push("single source");
+  }
+  return flags;
+}
+
+function plural(n, one, many = one + "s") {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+const CRITICISM_QUERY = /critic|controvers|backlash|boycott|outrage|problematic|hypocri|scandal/i;
+
+export function criticismSearched(searchQueries) {
+  if (!Array.isArray(searchQueries)) return null;
+  return searchQueries.some((q) => CRITICISM_QUERY.test(String(q)));
+}
+
+function allModelText(data) {
+  const parts = [data.context, data.objective, data.whatTheyDid?.idea, data.whatTheyDid?.audience, data.reception?.backlash, data.verdict?.interpretation, data.verdict?.cultural?.note, data.verdict?.commercial?.note];
+  for (const list of [data.brandContext, data.reception?.praise, data.reception?.criticism, data.verdict?.evidence, data.lessons]) parts.push(...(list || []));
+  parts.push(...(data.results?.items || []).map((i) => i.text));
+  return parts.filter(Boolean).join("\n");
+}
+
+// The judgement layer. Everything returned here is the app's own analysis,
+// derived from the grounded answer and its metadata, and is shown in
+// separate, labelled elements. It never edits the model's text.
+//
+// Confidence depends on two things only, never on how many sources there are:
+//   (a) distinct sites that are NOT brand-owned, and
+//   (b) whether any campaign-level outcome exists: a sales figure, an
+//       effectiveness award or a measured result, dated, with its scope stated.
+export function assessAnalysis(data, sources, citations = {}, { brand = data.matchedCampaign?.brand, searchQueries } = {}) {
+  const tagged = classifySources(sources, { brand, parentCompany: data.parentCompany || "", sourceTypes: data.sourceTypes || [] });
+  const nonBrandSites = [...new Set(tagged.filter((s) => s.type !== "brand_owned").map(siteKey))];
+  const k = nonBrandSites.length;
+
+  const items = data.results?.items || [];
+  const resultCites = citations.results ?? null;
+  const resultFlags = items.map((item, i) => {
+    const flags = claimFlags(item.text, resultCites?.[i], tagged);
+    if (!item.scopeStated || !item.dated) flags.push("scope unclear");
+    if (BRAND_LEVEL.test(item.text)) flags.push("brand-level, not counted as a campaign result");
+    return flags;
+  });
+  const evidenceCites = citations.evidence ?? null;
+  const evidenceFlags = (data.verdict?.evidence || []).map((t, i) => claimFlags(t, evidenceCites?.[i], tagged));
+
+  const cultural = data.verdict?.cultural?.rating;
+  const commercial = data.verdict?.commercial?.rating;
+
+  // ONE rule, read by both the verdict and the confidence: commercial
+  // evidence exists only when the results include a dated, scoped,
+  // campaign-level sales figure, effectiveness award or measured result AND
+  // the commercial rating isn't "Unproven". Neither can contradict the other.
+  const taggedOutcomes = items
+    .map((item, i) => (OUTCOME_TYPES.includes(item.type) && item.dated && item.scopeStated && !BRAND_LEVEL.test(item.text) ? i : -1))
+    .filter((i) => i >= 0);
+  const outcomeIdx = commercial && commercial !== "Unproven" ? taggedOutcomes : [];
+  const hasOutcome = outcomeIdx.length > 0;
+  // Outcomes whose linked sources are all brand-owned are the brand's own
+  // claim. Unlinked outcomes can't be checked either way and don't count here.
+  const brandOnlyOutcome =
+    hasOutcome &&
+    outcomeIdx.every((i) => {
+      const c = resultCites?.[i];
+      return Array.isArray(c) && c.length > 0 && c.every((n) => tagged[n]?.type === "brand_owned");
+    });
+  // High confidence needs at least one outcome that two or more different
+  // non-brand-owned sites back. A single site (or an unlinked claim) can't
+  // corroborate itself.
+  const corroborated = outcomeIdx.some((i) => {
+    const c = resultCites?.[i];
+    return Array.isArray(c) && new Set(c.map((n) => tagged[n]).filter((s) => s && s.type !== "brand_owned").map(siteKey)).size >= 2;
+  });
+  // ...and at least one trade or business press site among an outcome's
+  // sources, so Wikipedia and blogs repeating each other can't reach High.
+  const pressBacked = outcomeIdx.some((i) => {
+    const c = resultCites?.[i];
+    return Array.isArray(c) && c.some((n) => tagged[n]?.type === "trade_press");
+  });
+  const commercialEvidence = { present: hasOutcome, count: outcomeIdx.length, corroborated, pressBacked, brandOnly: brandOnlyOutcome };
+
+  const outcomeWords = "a campaign-level sales figure, effectiveness award or measured result";
+  // Why there's no commercial evidence, said the same way in both reasons.
+  let missing;
+  if (taggedOutcomes.length > 0) missing = `the outcome figures found don't show a business effect for this campaign (commercial rating: ${commercial})`;
+  else if (items.some((item) => OUTCOME_TYPES.includes(item.type)) || (data.brandContext || []).length > 0)
+    missing = `no source gives ${outcomeWords}; the only figures are brand-level, undated or without a stated scope`;
+  else missing = `no source gives ${outcomeWords}`;
+
+  let confidence;
+  let confidenceReason;
+  if (hasOutcome && corroborated && pressBacked && k >= 3) {
+    confidence = "High";
+    confidenceReason = `The sources include ${plural(outcomeIdx.length, "campaign-level outcome")} (sales, effectiveness awards or measured results, dated and scoped), backed by two or more non-brand-owned sites including trade or business press, and ${plural(k, "distinct non-brand-owned site")} cover the campaign.`;
+  } else if (hasOutcome && corroborated && !pressBacked && !brandOnlyOutcome && k >= 1) {
+    confidence = "Medium";
+    confidenceReason = `There is ${outcomeWords} backed by two or more non-brand-owned sites, but none of them is trade or business press (only blogs, aggregators or Wikipedia, which often repeat one original claim). ${plural(k, "distinct non-brand-owned site")} cover the campaign.`;
+  } else if (hasOutcome && brandOnlyOutcome) {
+    confidence = k >= 1 ? "Medium" : "Low";
+    confidenceReason = `The campaign-level outcome figures are linked only to brand-owned sources, so they are the brand's own claims. ${plural(k, "distinct non-brand-owned site")} cover the campaign.`;
+  } else if (hasOutcome && k >= 1 && !corroborated) {
+    confidence = "Medium";
+    confidenceReason = `There is ${outcomeWords}, but no such outcome is backed by two or more non-brand-owned sites (each rests on one site or isn't linked to a source), so it is uncorroborated. ${plural(k, "distinct non-brand-owned site")} cover the campaign.`;
+  } else if (hasOutcome && k >= 1) {
+    confidence = "Medium";
+    confidenceReason = `There is ${outcomeWords}, but only ${plural(k, "distinct non-brand-owned site")} cover the campaign. High confidence needs at least 3.`;
+  } else if (hasOutcome) {
+    confidence = "Low";
+    confidenceReason = `There is ${outcomeWords}, but every source is brand-owned.`;
+  } else if (k >= 3) {
+    confidence = "Medium";
+    confidenceReason = `${plural(k, "distinct non-brand-owned site")} cover the campaign, but ${missing}, so the commercial effect can't be judged.`;
+  } else {
+    confidence = "Low";
+    confidenceReason = `Only ${plural(k, "distinct non-brand-owned site")} cover the campaign, and ${missing}.`;
+  }
+
+  let verdict;
+  let verdictReason;
+  if (hasOutcome) {
+    if (commercial === "Positive") verdict = cultural === "Negative" ? VERDICT.mixed : VERDICT.success;
+    else if (commercial === "Negative") verdict = cultural === "Strong" ? VERDICT.mixed : VERDICT.failure;
+    else verdict = VERDICT.mixed;
+    verdictReason = `Set from the commercial rating (${commercial}) and cultural rating (${cultural}) below, backed by ${plural(outcomeIdx.length, "campaign-level outcome")}.`;
+  } else if ((cultural === "Strong" || cultural === "Moderate") && k >= 2) {
+    verdict = cultural === "Strong" ? VERDICT.cultural : VERDICT.someCultural;
+    verdictReason = `The sources support a cultural impact (rated ${cultural}, across ${plural(k, "non-brand-owned site")}), but ${missing}, so the commercial effect is unproven.`;
+  } else {
+    verdict = VERDICT.insufficient;
+    verdictReason = `${missing[0].toUpperCase() + missing.slice(1)}, and there isn't enough non-brand coverage to judge the cultural impact instead.`;
+  }
+
+  return {
+    sources: tagged,
+    nonBrandSites: k,
+    commercialEvidence,
+    confidence,
+    confidenceReason,
+    verdict,
+    verdictReason,
+    resultFlags,
+    evidenceFlags,
+    independentWarning: k < 3 && /\bindependent\b/i.test(allModelText(data)),
+    criticismSearched: criticismSearched(searchQueries),
+  };
 }
 
 // Keep only what an outcome needs, so analysis text can never reach the page
 // for a declined, unconfirmed or ambiguous request.
-export function shapeResponse(data, input, sources, citations = {}) {
+export function shapeResponse(data, input, sources, citations = {}, searchQueries) {
   const decision = decideOutcome(data, input);
   const base = {
     outcome: decision.outcome,
@@ -221,14 +528,16 @@ export function shapeResponse(data, input, sources, citations = {}) {
   }
   if (decision.outcome !== OUTCOME.analysis) return { ...base, ...decision };
 
+  const assessment = assessAnalysis(data, sources, citations, { brand: input.brand, searchQueries });
   return {
     ...base,
+    sources: assessment.sources,
+    assessment: (({ sources: _tagged, ...rest }) => rest)(assessment),
     matchedCampaign: data.matchedCampaign,
-    confidence: data.confidence,
-    sourceCoverage: sourceCoverage(sources.length),
-    confidenceExceedsSources: exceedsCoverage(data.confidence, sources.length),
-    confidenceReason: data.confidenceReason,
+    parentCompany: data.parentCompany,
     context: data.context,
+    brandContext: data.brandContext,
+    sourceTypes: data.sourceTypes,
     objective: data.objective,
     whatTheyDid: data.whatTheyDid,
     results: data.results,
@@ -344,6 +653,9 @@ export function viewFor(resp) {
   if (resp.outcome === OUTCOME.mismatch) return resp.found ? { view: OUTCOME.mismatch } : { view: "error", code: "malformed" };
   if (resp.outcome !== OUTCOME.analysis || resp.campaignFound !== true) return { view: "error", code: "malformed" };
   if (!Array.isArray(resp.sources) || resp.sources.length === 0) return { view: "error", code: "no_sources" };
+  if (!resp.assessment || !CONFIDENCE.includes(resp.assessment.confidence) || !Object.values(VERDICT).includes(resp.assessment.verdict)) {
+    return { view: "error", code: "malformed" };
+  }
   const problems = validateAnalysis({ ...resp, ambiguous: false, candidates: [] });
   return problems.length ? { view: "error", code: "malformed" } : { view: OUTCOME.analysis };
 }

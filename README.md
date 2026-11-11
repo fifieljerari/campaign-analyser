@@ -9,10 +9,13 @@ Search and returns a case file:
 - **What they did**: the idea, channels and audience
 - **Results**: measurable outcomes, only where a source publishes them
 - **Reception**: praise, criticism and any backlash
-- **Verdict**: Success / Mixed / Failure, with sourced evidence kept apart
-  from interpretation, and Mixed verdicts split by dimension
+- **Verdict**: Success / Mixed / Failure, "Strong cultural impact, commercial
+  effect unproven", or "Insufficient evidence", with a High / Medium / Low
+  confidence level. Both are set by the app's evidence rules, with the
+  reason shown, and sourced evidence is kept apart from interpretation
 - **Lessons for marketers**: two or three takeaways
-- **Sources**: the pages the search actually read
+- **Sources**: the pages the search actually read, each tagged brand-owned,
+  trade/business press or blog/aggregator
 
 **Live:** https://campaign-analyser.vercel.app/
 
@@ -40,8 +43,11 @@ runs Google Search through Gemini's grounding tool, and:
 | No statistic, sales figure, award or date without a source | Prompt rule; results have an explicit "No public results found" path |
 | Figures keep their scope (product, market, period) and belong to this campaign | Prompt rule; per-claim source links so readers can check |
 | Evidence separate from interpretation | Separate `evidence` and `interpretation` fields, shown under separate headings |
-| Mixed verdicts are split | A Mixed verdict with fewer than two split dimensions is rejected |
-| Confidence reflects the source material | The model's High / Medium / Low is shown as given, next to a separate tool check of how many sources the search returned |
+| Verdict and confidence follow the evidence, not the model's say-so | Set in code from campaign-level outcomes and non-brand-owned sources (see Limitations); the model only rates cultural impact and commercial effect separately |
+| Brand-level growth is not a campaign result | Prompt rule puts it under Context as "Brand-level figures", with an app note; code flags any that slip into Results and never counts them |
+| Thin or unscoped figures are visible | Figures backed by one site are tagged "single source"; undated or unscoped ones "scope unclear" |
+| Sources aren't called "independent" by default | The prompt forbids the word; if it appears with fewer than three non-brand-owned sites, the app shows a warning |
+| Criticism is searched for, not assumed absent | A dedicated criticism and backlash search runs in the same request; an empty section says whether that search ran |
 | Can't confirm the campaign → no analysis | A "couldn't confirm" notice; a match whose brand or year (±1) differs from the request is also rejected |
 | Ambiguous name → ask for detail | Candidate campaigns are listed and the user is asked for the product or market |
 
@@ -66,7 +72,7 @@ Browser (Vite + React)
             ├─ Gemini generateContent + tools: [google_search]
             ├─ parseModelJson() → normalizeAnalysis() → validateAnalysis()
             ├─ extractSourcesWithMap() + citeItems()   sources and per-claim links from metadata
-            └─ shapeResponse(): decideOutcome() + sourceCoverage()
+            └─ shapeResponse(): decideOutcome() + assessAnalysis()   verdict, confidence, source tags, flags
   ← { outcome: analysis | notBeauty | notFound | ambiguous | mismatch, ... }
 Browser: viewFor() re-checks the response before rendering anything
 ```
@@ -102,9 +108,12 @@ Grounded answers come with conditions in the
   framing.
 - **Not modified.** The model's text is displayed as returned. Lists are
   never shortened (only empty entries are dropped), and the model's
-  confidence is never overwritten. App-generated content, such as the
-  source-coverage tool check and the "check the scope" note, sits in
-  separate, labelled elements rather than inside the model's sentences.
+  verdict and confidence are not part of the model's answer: the app sets
+  them from the answer's structured fields and the search metadata, and
+  shows them in a box labelled "App assessment · set by the evidence rules,
+  not by the model". Source-type tags, "single source" / "scope unclear"
+  flags and app notes sit in separate, labelled elements, never inside the
+  model's sentences.
 - **Links go straight to their destination**, with no interstitials.
 
 **Why the examples are hand-written.** The terms don't allow a grounded
@@ -120,6 +129,52 @@ open without calling the API or using quota.
 
 ## Limitations
 
+- **How confidence is calculated.** Confidence never depends on how many
+  sources the search returned. The app sets it from two things:
+  (a) how many distinct sites are not brand-owned, and (b) whether the
+  results include commercial evidence: a campaign-level sales figure,
+  effectiveness award or measured result that is dated, has a stated
+  scope, and comes with a commercial rating other than "Unproven".
+  - **High**: commercial evidence backed by two or more non-brand-owned
+    sites, at least one of them trade or business press, and at least
+    three distinct non-brand-owned sites overall.
+  - **Medium**: commercial evidence that is uncorroborated (one site),
+    backed only by blogs, aggregators or Wikipedia, or covered by one or
+    two non-brand sites; or no commercial evidence but three or more
+    non-brand-owned sites.
+  - **Low**: everything else, including sources that are all brand-owned.
+
+  The verdict reads the same commercial-evidence rule, so the two can't
+  contradict each other. Without commercial evidence the verdict is
+  "Strong / Some cultural impact, commercial effect unproven" (when the
+  cultural rating is Strong or Moderate across at least two non-brand
+  sites) or "Insufficient evidence". The reason for both is shown on the
+  page.
+- **Syndicated claims can look like several sources.** Blogs and
+  aggregators often repeat one original figure (an Ad Age number, say).
+  The app can't tell a copy from independent reporting, which is why High
+  confidence also needs trade or business press.
+- **The non-brand site count covers the brand, not only the campaign.**
+  It includes sources that discuss the brand in general, so a well-known
+  brand can show many non-brand sites for a campaign with little coverage
+  of its own.
+- **Brand-owned detection is a heuristic.** A source is brand-owned when
+  the brand or parent-company name is in its domain, when the domain is on
+  a short list of parent-company sites (Unilever, L'Oréal, P&G, Estée
+  Lauder, Coty, Beiersdorf, Shiseido, Kao, including regional domains such
+  as hul.co.in), or when the model classes it as brand-owned. Subsidiary or
+  regional domains outside that list, with an unrelated name, can be
+  missed. Sources the code can't place are treated as blogs/aggregators,
+  the tier that earns no extra trust.
+- **"Insufficient evidence" is unit-tested, not live-tested.** In live
+  testing, obscure campaigns came back "couldn't confirm" (the search
+  didn't surface them), and thinly covered ones still drew enough brand
+  coverage for a cultural-impact verdict. The path is covered by unit
+  tests only.
+- **Criticism may concern the brand rather than the campaign.** The
+  criticism search covers the campaign and the brand, so reception can
+  include brand-wide issues (a parent company's other products, a later
+  ad, the business model) that say little about the campaign itself.
 - **Depends on Gemini 2.5 Flash, which Google labels legacy.** Google
   marks `gemini-2.5-flash` as legacy with limited access and could withdraw
   it; 2.5 Flash-Lite is already closed to new users. If it's withdrawn,
@@ -132,25 +187,28 @@ open without calling the API or using quota.
 - **About 20 analyses a day.** The free-tier quota for `gemini-2.5-flash`
   is 20 requests per day for the whole project
   (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`), shared by every
-  visitor. When it's used up, the page shows "Free daily quota reached,
-  back tomorrow" and points to the examples.
+  visitor. Each analysis is one grounded request (two if the single retry
+  runs); the criticism search runs inside that request. When the quota is
+  used up, the page shows "Free daily quota reached, back tomorrow" and
+  points to the examples. The `X-Gemini-Attempts` response header and the
+  server log (`attempt_rejected`, error type only) show when a retry ran
+  and why.
 - **The 2-per-day cap is a soft cap.** It lives in the visitor's browser
   and can be bypassed by clearing storage. It spreads the daily quota
   across visitors; it isn't security.
 - **Figures can be mis-scoped.** Every figure comes from a search result,
-  but the model sometimes presents a number from a later year, a different
-  product or market, or the brand overall as a result of the campaign,
-  especially when the source itself dropped the scope. The prompt forbids
-  it, but code can't fully prevent it. Each figure links to the sources
-  that back it, and the page asks readers to check scope before reusing
-  one.
-- **Coverage bias.** Famous campaigns are well documented; small or
-  regional ones may come back Low confidence or not found. That's the
-  correct answer, not a bug.
+  but the model sometimes widens a figure's scope (a product's sales
+  reported as the brand's) or includes results from later campaigns under
+  the same platform. The prompt forbids it, but code can't fully prevent
+  it. Each figure links to the sources that back it, carries "single
+  source" or "scope unclear" tags where they apply, and the page asks
+  readers to check scope before reusing one.
 - **Results are rarely public.** Most brands don't publish campaign
-  outcomes, so "No public results found" is common.
-- **Model judgement.** The verdict and lessons are the model's reading of
-  the sources. Check the sources before relying on them.
+  outcomes, so "No public results found" and "commercial effect unproven"
+  are common.
+- **Model judgement.** The cultural and commercial ratings, the
+  interpretation and the lessons are the model's reading of the sources.
+  Check the sources before relying on them.
 
 ---
 

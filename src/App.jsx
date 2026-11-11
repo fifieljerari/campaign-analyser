@@ -3,7 +3,7 @@ import CampaignForm from "./components/CampaignForm.jsx";
 import Report from "./components/Report.jsx";
 import SearchSuggestions from "./components/SearchSuggestions.jsx";
 import { EXAMPLES, EXAMPLES_WRITTEN_ON } from "./data/examples.js";
-import { OUTCOME, viewFor } from "./lib/analysis.js";
+import { OUTCOME, assessAnalysis, viewFor } from "./lib/analysis.js";
 import { recordGeneration, remainingGenerations } from "./lib/dailyCap.js";
 
 const LOADING_MESSAGES = [
@@ -105,7 +105,10 @@ export default function App() {
   }
 
   function openExample(ex) {
-    setExample(ex);
+    // The examples get the same app assessment (verdict, confidence, source
+    // tags, flags) as a live answer, computed from their hand-written fields.
+    const { sources, ...assessment } = assessAnalysis(ex.analysis, ex.analysis.sources, ex.analysis.citations);
+    setExample({ ...ex, analysis: { ...ex.analysis, sources, assessment } });
     setPhase("example");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }

@@ -1,7 +1,7 @@
 import { SYSTEM_PROMPT, buildUserPrompt } from "../src/lib/prompt.js";
 import { citeItems, extractSourcesWithMap, normalizeAnalysis, parseModelJson, shapeResponse, validateAnalysis, validateInput, OUTCOME } from "../src/lib/analysis.js";
 
-// gemini-2.5-flash, not 3.x: on the free tier, Google Search grounding returns
+// The model is this one line. gemini-2.5-flash, not 3.x: on the free tier, Google Search grounding returns
 // 429 for Gemini 3.x models unless billing is enabled. 2.5 Flash still
 // grounds for free (Google labels it legacy). See README "Limitations".
 const MODEL = "gemini-2.5-flash";
@@ -31,6 +31,13 @@ async function callGemini(input, apiKey, timeoutMs) {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Why an attempt was rejected, written to the server log (Vercel runtime
+// logs). Only the error type and the app's own validation messages, which
+// name fields and rules, never any grounded text from the answer.
+function logRetry(attempt, type, problems) {
+  console.warn(JSON.stringify({ event: "attempt_rejected", attempt, type, problems: problems.slice(0, 5) }));
 }
 
 function sleep(ms) {
@@ -68,6 +75,9 @@ export default async function handler(req, res) {
       const timeLeft = deadline - Date.now();
       if (attempt > 1 && timeLeft < MIN_RETRY_MS) break;
       const response = await callGemini(input, apiKey, timeLeft);
+      // How many grounded requests this analysis used (each one counts
+      // against the daily quota), for monitoring quota use.
+      res.setHeader?.("X-Gemini-Attempts", String(attempt));
 
       // Quota exhausted: return at once. Never retried, since a retry can't
       // succeed and would only burn more of the 20/day free quota.
@@ -81,6 +91,7 @@ export default async function handler(req, res) {
       if (!response.ok) {
         lastProblem = `Gemini returned ${response.status}`;
         if (response.status === 503 && attempt < MAX_ATTEMPTS) {
+          logRetry(attempt, "gemini_503", []);
           await sleep(1500);
           continue;
         }
@@ -93,6 +104,7 @@ export default async function handler(req, res) {
       const problems = data ? validateAnalysis(data) : ["reply was not valid JSON"];
       if (problems.length) {
         lastProblem = "malformed: " + problems.slice(0, 3).join("; ");
+        logRetry(attempt, "malformed", data ? problems : ["reply was not valid JSON"]);
         continue;
       }
 
@@ -101,22 +113,24 @@ export default async function handler(req, res) {
       const citations =
         data.isBeauty && data.campaignFound && !data.ambiguous
           ? {
-              results: citeItems(data.results.items, gm, chunkToSource),
+              results: citeItems(data.results.items.map((i) => i.text), gm, chunkToSource),
               evidence: citeItems(data.verdict.evidence, gm, chunkToSource),
             }
           : {};
-      const shaped = shapeResponse(data, input, sources, citations);
+      const searchQueries = gm?.webSearchQueries || [];
+      const shaped = shapeResponse(data, input, sources, citations, searchQueries);
 
       // An analysis with zero search sources can't be checked by anyone, so
       // it is never shown.
       if (shaped.outcome === OUTCOME.analysis && sources.length === 0) {
         lastProblem = "no_sources";
+        logRetry(attempt, "no_sources", []);
         continue;
       }
 
       return res.status(200).json({
         ...shaped,
-        searchQueries: candidate.groundingMetadata?.webSearchQueries || [],
+        searchQueries,
         // Google's Search Suggestions chip, which the grounding terms require
         // apps to display alongside grounded answers.
         searchSuggestionsHtml: candidate.groundingMetadata?.searchEntryPoint?.renderedContent || "",
