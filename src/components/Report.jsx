@@ -214,6 +214,12 @@ export default function Report({ r, searchQueries = [], searchSuggestionsHtml = 
         <h4>Ratings by dimension (analysis)</h4>
         <Dimension label="Cultural impact" d={r.verdict.cultural} />
         <Dimension label="Commercial effect" d={r.verdict.commercial} />
+        {a.commercialNote && (
+          <p className="app-note">
+            <span className="app-note-label">App note</span>
+            {a.commercialNote}
+          </p>
+        )}
         <h4>Evidence (from sources)</h4>
         <CitedBullets items={r.verdict.evidence} cites={r.citations?.evidence ?? null} sources={r.sources} flags={a.evidenceFlags} />
         <h4>Interpretation (analysis)</h4>

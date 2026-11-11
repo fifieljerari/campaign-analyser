@@ -15,7 +15,8 @@ Search and returns a case file:
   reason shown, and sourced evidence is kept apart from interpretation
 - **Lessons for marketers**: two or three takeaways
 - **Sources**: the pages the search actually read, each tagged brand-owned,
-  trade/business press or blog/aggregator
+  trade/business press, general news, academic/institutional or
+  blog/aggregator
 
 **Live:** https://campaign-analyser.vercel.app/
 
@@ -164,8 +165,19 @@ open without calling the API or using quota.
   Lauder, Coty, Beiersdorf, Shiseido, Kao, including regional domains such
   as hul.co.in), or when the model classes it as brand-owned. Subsidiary or
   regional domains outside that list, with an unrelated name, can be
-  missed. Sources the code can't place are treated as blogs/aggregators,
-  the tier that earns no extra trust.
+  missed. Other sources are tiered as trade/business press (marketing,
+  advertising, beauty-trade and business titles), general news and
+  consumer media, academic/institutional (.edu, .ac.uk, .gov and similar,
+  or the model's call), or blog/aggregator (Wikipedia, slide-sharing,
+  rating sites). Only trade/business press counts towards High confidence.
+  Sources the code can't place take the model's classification, or
+  blog/aggregator, the tier that earns no extra trust. A result backed
+  only by brand-owned sources is tagged "brand's own claim".
+- **The model's commercial rating can disagree with the app.** The prompt
+  requires "Unproven" without a campaign-level result, but when the model
+  still rates it otherwise, the card shows the model's rating and an app
+  note underneath explains that the app treats the commercial effect as
+  unproven, and why.
 - **"Insufficient evidence" is unit-tested, not live-tested.** In live
   testing, obscure campaigns came back "couldn't confirm" (the search
   didn't surface them), and thinly covered ones still drew enough brand

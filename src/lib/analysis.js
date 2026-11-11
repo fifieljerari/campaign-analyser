@@ -22,8 +22,14 @@ export const RESULT_TYPES = ["sales", "effectiveness_award", "measured_result", 
 export const OUTCOME_TYPES = ["sales", "effectiveness_award", "measured_result"];
 export const CULTURAL_RATINGS = ["Strong", "Moderate", "Weak", "Negative", "Unclear"];
 export const COMMERCIAL_RATINGS = ["Positive", "Mixed", "Negative", "Unproven"];
-export const SOURCE_TYPES = ["brand_owned", "trade_press", "blog_aggregator"];
-export const SOURCE_TYPE_LABEL = { brand_owned: "Brand-owned", trade_press: "Trade/business press", blog_aggregator: "Blog/aggregator" };
+export const SOURCE_TYPES = ["brand_owned", "trade_press", "news", "academic", "blog_aggregator"];
+export const SOURCE_TYPE_LABEL = {
+  brand_owned: "Brand-owned",
+  trade_press: "Trade/business press",
+  news: "General news",
+  academic: "Academic/institutional",
+  blog_aggregator: "Blog/aggregator",
+};
 
 export const VERDICT = {
   success: "Success",
@@ -283,11 +289,23 @@ const KNOWN_PRESS = [
   "adage.com", "adweek.com", "campaignlive.co.uk", "campaignlive.com", "marketingweek.com", "thedrum.com", "warc.com",
   "effie.org", "canneslions.com", "lovethework.com", "ipa.co.uk", "dandad.org", "oneclub.org", "mediapost.com",
   "marketingdive.com", "retaildive.com", "businessinsider.com", "forbes.com", "fortune.com", "ft.com", "wsj.com",
-  "nytimes.com", "washingtonpost.com", "theguardian.com", "bbc.co.uk", "bbc.com", "reuters.com", "bloomberg.com",
-  "cnbc.com", "economist.com", "fastcompany.com", "hbr.org", "time.com", "independent.co.uk", "telegraph.co.uk",
-  "wwd.com", "voguebusiness.com", "businessoffashion.com", "glossy.co", "cosmeticsbusiness.com", "cosmeticsdesign.com",
+  "reuters.com", "bloomberg.com", "cnbc.com", "economist.com", "fastcompany.com", "hbr.org", "wwd.com", "voguebusiness.com", "businessoffashion.com", "glossy.co", "cosmeticsbusiness.com", "cosmeticsdesign.com",
   "cosmeticsdesign-europe.com", "cosmeticsdesign-asia.com", "beautyindependent.com", "happi.com", "premiumbeautynews.com",
 ];
+
+// General news and consumer media: credible reporting, but not the trade or
+// business press that High confidence needs.
+const KNOWN_NEWS = [
+  "nytimes.com", "washingtonpost.com", "theguardian.com", "bbc.co.uk", "bbc.com", "cnn.com", "aljazeera.com",
+  "laweekly.com", "latimes.com", "time.com", "independent.co.uk", "telegraph.co.uk", "apnews.com", "npr.org",
+  "usatoday.com", "nbcnews.com", "cbsnews.com", "abcnews.go.com", "cbc.ca", "vice.com", "huffpost.com",
+  "dailymail.co.uk", "thetimes.co.uk", "vox.com", "theatlantic.com", "newyorker.com", "vogue.com", "vogue.co.uk",
+  "allure.com", "elle.com", "harpersbazaar.com", "cosmopolitan.com", "glamour.com", "refinery29.com", "marieclaire.co.uk",
+  "wallpaper.com", "timeout.com", "hypebeast.com",
+];
+
+// Universities, government and other institutions, recognised by domain.
+const ACADEMIC_DOMAIN = /\.(edu|gov|mil|int)$|\.(ac|edu|gov)\.[a-z]{2}$|\.museum$/;
 
 // Aggregators that never count as trade or business press, whatever the
 // model says: wikis, document and slide sharing, blogging platforms.
@@ -324,8 +342,10 @@ function parentDomainsFor(brand, parentCompany) {
 // Tags every source. Brand-owned if ANY of: the domain is on the parent's
 // alias list, the brand/parent name is in the domain, or the model classed
 // it as brand-owned. Otherwise the known-aggregator list (Wikipedia etc.),
-// then the known-press list, then the model's classification; anything left
-// is a blog/aggregator, the type that earns no extra trust.
+// academic/institutional domains (.edu, .ac.uk, .gov...), the trade/business
+// press list, the general-news list, then the model's classification;
+// anything left is a blog/aggregator, the type that earns no extra trust.
+// Only trade/business press counts towards High confidence.
 export function classifySources(sources, { brand, parentCompany = "", sourceTypes = [] }) {
   const tokens = ownerTokens(brand, parentCompany);
   const parentDomains = parentDomainsFor(brand, parentCompany);
@@ -341,7 +361,9 @@ export function classifySources(sources, { brand, parentCompany = "", sourceType
     else if (domain && isOwnedDomain(domain, tokens)) [type, basis] = ["brand_owned", "domain"];
     else if (m?.type === "brand_owned") [type, basis] = ["brand_owned", "model"];
     else if (domain && KNOWN_AGGREGATORS.some((k) => sameSite(domain, k))) [type, basis] = ["blog_aggregator", "list"];
+    else if (domain && ACADEMIC_DOMAIN.test(domain)) [type, basis] = ["academic", "domain"];
     else if (domain && KNOWN_PRESS.some((k) => sameSite(domain, k))) [type, basis] = ["trade_press", "list"];
+    else if (domain && KNOWN_NEWS.some((k) => sameSite(domain, k))) [type, basis] = ["news", "list"];
     else if (m) [type, basis] = [m.type, "model"];
     return { ...s, domain, type, typeBasis: basis };
   });
@@ -406,6 +428,8 @@ export function assessAnalysis(data, sources, citations = {}, { brand = data.mat
     const flags = claimFlags(item.text, resultCites?.[i], tagged);
     if (!item.scopeStated || !item.dated) flags.push("scope unclear");
     if (BRAND_LEVEL.test(item.text)) flags.push("brand-level, not counted as a campaign result");
+    const c = resultCites?.[i];
+    if (Array.isArray(c) && c.length > 0 && c.every((n) => tagged[n]?.type === "brand_owned")) flags.push("brand's own claim");
     return flags;
   });
   const evidenceCites = citations.evidence ?? null;
@@ -505,6 +529,11 @@ export function assessAnalysis(data, sources, citations = {}, { brand = data.mat
     confidenceReason,
     verdict,
     verdictReason,
+    // The app's own line under the Commercial effect card whenever the
+    // assessment treats the commercial effect as unproven.
+    commercialNote: hasOutcome
+      ? null
+      : `${commercial && commercial !== "Unproven" ? `The model rated this "${commercial}", but the` : "The"} app treats the commercial effect as unproven: ${missing}.`,
     resultFlags,
     evidenceFlags,
     independentWarning: k < 3 && /\bindependent\b/i.test(allModelText(data)),

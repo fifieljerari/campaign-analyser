@@ -126,7 +126,7 @@ export const EXAMPLES = [
       sourceTypes: [
         { domain: "en.wikipedia.org", type: "blog_aggregator" },
         { domain: "thebrandhopper.com", type: "blog_aggregator" },
-        { domain: "cases.open.ubc.ca", type: "blog_aggregator" },
+        { domain: "cases.open.ubc.ca", type: "academic" },
         { domain: "slideshare.net", type: "blog_aggregator" },
       ],
       citations: {
@@ -197,9 +197,9 @@ export const EXAMPLES = [
         { title: "Astrophe Magazine: The Aesop Queer Library", uri: "https://www.astrophemagazine.com/astrophe-magazine/the-aesop-queer-library" },
       ],
       sourceTypes: [
-        { domain: "wallpaper.com", type: "trade_press" },
-        { domain: "timeout.com", type: "trade_press" },
-        { domain: "hypebeast.com", type: "trade_press" },
+        { domain: "wallpaper.com", type: "news" },
+        { domain: "timeout.com", type: "news" },
+        { domain: "hypebeast.com", type: "news" },
         { domain: "astrophemagazine.com", type: "blog_aggregator" },
       ],
       citations: {

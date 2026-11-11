@@ -345,6 +345,8 @@ button.submit:disabled { opacity: 0.55; cursor: not-allowed; }
 }
 .source-tag.is-brand_owned { border-color: var(--stamp-red); color: var(--stamp-red); }
 .source-tag.is-trade_press { border-color: var(--stamp-green); color: var(--stamp-green); }
+.source-tag.is-news { border-color: var(--ink); color: var(--ink); }
+.source-tag.is-academic { border-color: var(--brass-deep); color: var(--brass-deep); }
 
 .example-banner {
   background: var(--paper);

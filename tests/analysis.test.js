@@ -312,6 +312,56 @@ test("parent-company alias list: hul.co.in is Unilever-owned, but only for Unile
   assert.equal(classifySources([site("kao.com")], { brand: "Bioré", parentCompany: "Kao Corporation" })[0].type, "brand_owned");
 });
 
+test("app note under the Commercial effect card whenever the app treats it as unproven", () => {
+  // The live L'Oréal contradiction: the model says Positive, but no campaign-level result exists.
+  const positiveNoResult = fullAnalysis({
+    results: { available: true, items: [{ text: "Brand awareness stands at 87% in the U.S.", type: "reach", dated: false, scopeStated: true }] },
+  });
+  const a = assessAnalysis(positiveNoResult, PRESS, {}, { brand: "Dove" });
+  assert.equal(a.commercialEvidence.present, false);
+  assert.match(a.commercialNote, /^The model rated this "Positive", but the app treats the commercial effect as unproven/);
+  assert.notEqual(a.verdict, VERDICT.success);
+  // Model already says Unproven: the note says so without "the model rated".
+  const unproven = { ...positiveNoResult, verdict: { ...positiveNoResult.verdict, commercial: { rating: "Unproven", note: "n" } } };
+  assert.match(assessAnalysis(unproven, PRESS, {}, { brand: "Dove" }).commercialNote, /^The app treats the commercial effect as unproven/);
+  // Commercial evidence present: no note.
+  assert.equal(assessAnalysis(fullAnalysis(), PRESS, { results: [[0, 1]] }, { brand: "Dove" }).commercialNote, null);
+});
+
+test("source tiers: academic/institutional and general news are separate, and only trade/business press reaches High", () => {
+  const tagged = classifySources(
+    [site("jhu.edu"), site("ox.ac.uk"), site("aljazeera.com"), site("laweekly.com"), site("adage.com"), site("madeometer.com")],
+    { brand: "L'Oréal Paris", sourceTypes: [{ domain: "aljazeera.com", type: "trade_press" }, { domain: "madeometer.com", type: "blog_aggregator" }] }
+  );
+  assert.deepEqual(tagged.map((s) => s.type), ["academic", "academic", "news", "news", "trade_press", "blog_aggregator"]);
+  // An outcome backed by news + academic sites only: corroborated, not press-backed, so Medium.
+  const base = fullAnalysis();
+  const nonTrade = [site("jhu.edu"), site("aljazeera.com"), site("laweekly.com")];
+  const m = assessAnalysis(base, nonTrade, { results: [[0, 1, 2]] }, { brand: "Dove" });
+  assert.equal(m.commercialEvidence.corroborated, true);
+  assert.equal(m.commercialEvidence.pressBacked, false);
+  assert.equal(m.confidence, "Medium");
+  // Add one trade-press site backing it: High.
+  assert.equal(assessAnalysis(base, [...nonTrade, site("adage.com")], { results: [[1, 3]] }, { brand: "Dove" }).confidence, "High");
+  // The model can still classify unknown sites into the new tiers, and they validate.
+  assert.deepEqual(validateAnalysis(fullAnalysis({ sourceTypes: [{ domain: "x.org", type: "academic" }, { domain: "y.com", type: "news" }] })), []);
+});
+
+test("a result backed only by brand-owned sources is tagged as the brand's own claim", () => {
+  const data = fullAnalysis({
+    results: { available: true, items: [
+      { text: "Sales rose 20% in 2019.", type: "sales", dated: true, scopeStated: true },
+      { text: "Sales rose 30% in 2020.", type: "sales", dated: true, scopeStated: true },
+      { text: "Sales rose 40% in 2021.", type: "sales", dated: true, scopeStated: true },
+    ] },
+  });
+  const sources = [site("dove.com"), site("unilever.com"), site("adage.com")];
+  const a = assessAnalysis(data, sources, { results: [[0, 1], [0, 2], []] }, { brand: "Dove" });
+  assert.ok(a.resultFlags[0].includes("brand's own claim"));
+  assert.ok(!a.resultFlags[1].includes("brand's own claim")); // one non-brand source backs it
+  assert.ok(!a.resultFlags[2].includes("brand's own claim")); // unlinked: can't tell
+});
+
 test("figures backed by one site are flagged single source; 'independent' is flagged under 3 non-brand sites", () => {
   const data = fullAnalysis({ verdict: { ...fullAnalysis().verdict, evidence: ["Sales doubled to $4bn.", "Won at Cannes in 2007."] }, context: "Multiple independent sources agree." });
   const a = assessAnalysis(data, [site("adage.com"), site("thedrum.com")], { results: [[0, 1]], evidence: [[0], [0]] }, { brand: "Dove" });
