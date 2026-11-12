@@ -291,6 +291,7 @@ const KNOWN_PRESS = [
   "marketingdive.com", "retaildive.com", "businessinsider.com", "forbes.com", "fortune.com", "ft.com", "wsj.com",
   "reuters.com", "bloomberg.com", "cnbc.com", "economist.com", "fastcompany.com", "hbr.org", "wwd.com", "voguebusiness.com", "businessoffashion.com", "glossy.co", "cosmeticsbusiness.com", "cosmeticsdesign.com",
   "cosmeticsdesign-europe.com", "cosmeticsdesign-asia.com", "beautyindependent.com", "happi.com", "premiumbeautynews.com",
+  "moodiedavittreport.com", "marketing-interactive.com",
 ];
 
 // General news and consumer media: credible reporting, but not the trade or
@@ -533,7 +534,12 @@ export function assessAnalysis(data, sources, citations = {}, { brand = data.mat
     // assessment treats the commercial effect as unproven.
     commercialNote: hasOutcome
       ? null
-      : `${commercial && commercial !== "Unproven" ? `The model rated this "${commercial}", but the` : "The"} app treats the commercial effect as unproven: ${missing}.`,
+      : `${commercial && commercial !== "Unproven" ? `The model rated this "${commercial}" below, but the` : "The"} app treats the commercial effect as unproven: ${missing}.`,
+    // Matching note under the Interpretation, which may still describe
+    // commercial success in the model's words.
+    interpretationNote: hasOutcome
+      ? null
+      : "The app treats the commercial effect as unproven (see the note above the Commercial effect rating). Any commercial success described in this interpretation is the model's reading, not backed by a campaign-level result in the sources.",
     resultFlags,
     evidenceFlags,
     independentWarning: k < 3 && /\bindependent\b/i.test(allModelText(data)),

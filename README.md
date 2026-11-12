@@ -171,13 +171,20 @@ open without calling the API or using quota.
   or the model's call), or blog/aggregator (Wikipedia, slide-sharing,
   rating sites). Only trade/business press counts towards High confidence.
   Sources the code can't place take the model's classification, or
-  blog/aggregator, the tier that earns no extra trust. A result backed
+  blog/aggregator, the tier that earns no extra trust. The trade/business
+  press list is explicit, so a genuine trade publication outside it can be
+  tagged blog/aggregator when the model doesn't classify it, which can
+  hold confidence below High. A result backed
   only by brand-owned sources is tagged "brand's own claim".
 - **The model's commercial rating can disagree with the app.** The prompt
   requires "Unproven" without a campaign-level result, but when the model
-  still rates it otherwise, the card shows the model's rating and an app
-  note underneath explains that the app treats the commercial effect as
-  unproven, and why.
+  still rates it otherwise, the card shows the model's rating unchanged,
+  with an app note in a separate box directly above it explaining that the
+  app treats the commercial effect as unproven, and why. A matching app
+  note follows the Interpretation, which may still describe commercial
+  success in the model's words. The rating isn't hidden or relabelled,
+  because Google's grounding terms don't allow grounded results to be
+  modified.
 - **"Insufficient evidence" is unit-tested, not live-tested.** In live
   testing, obscure campaigns came back "couldn't confirm" (the search
   didn't surface them), and thinly covered ones still drew enough brand

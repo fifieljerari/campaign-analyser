@@ -21,6 +21,7 @@ import {
 } from "../src/lib/analysis.js";
 import { CAP_MAX, CAP_WINDOW_MS, recordGeneration, remainingGenerations } from "../src/lib/dailyCap.js";
 import handler from "../api/generate.js";
+import { SYSTEM_PROMPT } from "../src/lib/prompt.js";
 
 // ---------------------------------------------------------------- fixtures
 
@@ -312,20 +313,23 @@ test("parent-company alias list: hul.co.in is Unilever-owned, but only for Unile
   assert.equal(classifySources([site("kao.com")], { brand: "Bioré", parentCompany: "Kao Corporation" })[0].type, "brand_owned");
 });
 
-test("app note under the Commercial effect card whenever the app treats it as unproven", () => {
+test("app notes for the Commercial effect card and the Interpretation whenever the app treats it as unproven", () => {
   // The live L'Oréal contradiction: the model says Positive, but no campaign-level result exists.
   const positiveNoResult = fullAnalysis({
     results: { available: true, items: [{ text: "Brand awareness stands at 87% in the U.S.", type: "reach", dated: false, scopeStated: true }] },
   });
   const a = assessAnalysis(positiveNoResult, PRESS, {}, { brand: "Dove" });
   assert.equal(a.commercialEvidence.present, false);
-  assert.match(a.commercialNote, /^The model rated this "Positive", but the app treats the commercial effect as unproven/);
+  assert.match(a.commercialNote, /^The model rated this "Positive" below, but the app treats the commercial effect as unproven/);
+  assert.match(a.interpretationNote, /model's reading, not backed by a campaign-level result/);
   assert.notEqual(a.verdict, VERDICT.success);
   // Model already says Unproven: the note says so without "the model rated".
   const unproven = { ...positiveNoResult, verdict: { ...positiveNoResult.verdict, commercial: { rating: "Unproven", note: "n" } } };
   assert.match(assessAnalysis(unproven, PRESS, {}, { brand: "Dove" }).commercialNote, /^The app treats the commercial effect as unproven/);
   // Commercial evidence present: no note.
-  assert.equal(assessAnalysis(fullAnalysis(), PRESS, { results: [[0, 1]] }, { brand: "Dove" }).commercialNote, null);
+  const proven = assessAnalysis(fullAnalysis(), PRESS, { results: [[0, 1]] }, { brand: "Dove" });
+  assert.equal(proven.commercialNote, null);
+  assert.equal(proven.interpretationNote, null);
 });
 
 test("source tiers: academic/institutional and general news are separate, and only trade/business press reaches High", () => {
@@ -360,6 +364,28 @@ test("a result backed only by brand-owned sources is tagged as the brand's own c
   assert.ok(a.resultFlags[0].includes("brand's own claim"));
   assert.ok(!a.resultFlags[1].includes("brand's own claim")); // one non-brand source backs it
   assert.ok(!a.resultFlags[2].includes("brand's own claim")); // unlinked: can't tell
+});
+
+test("report places the commercial app note above the model's rating and leaves the rating unchanged", () => {
+  const src = readFileSync(new URL("../src/components/Report.jsx", import.meta.url), "utf8");
+  const note = src.indexOf("a.commercialNote &&");
+  const card = src.indexOf('<Dimension label="Commercial effect" d={r.verdict.commercial} />');
+  const interp = src.indexOf("{r.verdict.interpretation}");
+  const interpNote = src.indexOf("a.interpretationNote &&");
+  assert.ok(note > 0 && card > note, "commercial note comes before the Commercial effect card");
+  assert.ok(interpNote > interp, "interpretation note comes after the Interpretation");
+  assert.match(src, /<span className=\{"stamp small " \+ \(DIM_STAMP\[d\.rating\] \|\| ""\)\}>\{d\.rating\}<\/span>/, "the model's rating is rendered as given");
+});
+
+test("prompt repeats the commercial rule beside the commercial field in the answer format", () => {
+  const field = SYSTEM_PROMPT.indexOf('"commercial": {"rating"');
+  assert.ok(field > 0);
+  assert.match(SYSTEM_PROMPT.slice(field, field + 500), /MUST be "Unproven" unless "results" holds a dated, scoped, campaign-level/);
+});
+
+test("trade-press list includes Moodie Davitt and Marketing-Interactive", () => {
+  const tagged = classifySources([site("moodiedavittreport.com"), site("marketing-interactive.com"), site("unknown-trade-mag.com")], { brand: "L'Oréal Paris" });
+  assert.deepEqual(tagged.map((s) => [s.type, s.typeBasis]), [["trade_press", "list"], ["trade_press", "list"], ["blog_aggregator", "default"]]);
 });
 
 test("figures backed by one site are flagged single source; 'independent' is flagged under 3 non-brand sites", () => {

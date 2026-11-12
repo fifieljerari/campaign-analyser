@@ -60,6 +60,9 @@ Reply with ONLY one raw JSON object, no markdown fences, no text before or after
   "verdict": {
     "cultural": {"rating": "Strong" | "Moderate" | "Weak" | "Negative" | "Unclear", "note": string},
     "commercial": {"rating": "Positive" | "Mixed" | "Negative" | "Unproven", "note": string},
+                                                // rating MUST be "Unproven" unless "results" holds a dated, scoped, campaign-level
+                                                // "sales", "effectiveness_award" or "measured_result" item the source attributes to
+                                                // this campaign. Brand awareness levels, market value and praise never count.
     "evidence": [string],                       // 1-4 sourced facts
     "interpretation": string                    // 2-3 sentences of reasoning
   },

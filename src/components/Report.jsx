@@ -213,17 +213,26 @@ export default function Report({ r, searchQueries = [], searchSuggestionsHtml = 
         </div>
         <h4>Ratings by dimension (analysis)</h4>
         <Dimension label="Cultural impact" d={r.verdict.cultural} />
-        <Dimension label="Commercial effect" d={r.verdict.commercial} />
+        {/* App note sits ABOVE the model's commercial rating, in its own box.
+            The rating itself is shown unchanged: the grounding terms don't
+            allow hiding or relabelling grounded results. */}
         {a.commercialNote && (
-          <p className="app-note">
-            <span className="app-note-label">App note</span>
+          <div className="app-callout" role="note">
+            <span className="app-note-label">App note &middot; not part of the model&rsquo;s answer</span>
             {a.commercialNote}
-          </p>
+          </div>
         )}
+        <Dimension label="Commercial effect" d={r.verdict.commercial} />
         <h4>Evidence (from sources)</h4>
         <CitedBullets items={r.verdict.evidence} cites={r.citations?.evidence ?? null} sources={r.sources} flags={a.evidenceFlags} />
         <h4>Interpretation (analysis)</h4>
         <p>{r.verdict.interpretation}</p>
+        {a.interpretationNote && (
+          <div className="app-callout" role="note">
+            <span className="app-note-label">App note &middot; not part of the model&rsquo;s answer</span>
+            {a.interpretationNote}
+          </div>
+        )}
       </Exhibit>
 
       <Exhibit letter="G" title="Lessons for Marketers">
